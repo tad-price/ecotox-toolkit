@@ -1,0 +1,2 @@
+species_emb_dim,fp_reduce_dim,hidden_sizes,lr,weight_decay,n_epochs,batch_size,mean_rmse,std_rmse
+16,32,"[128, 64, 32]",0.001,0.0001,1,32,1.312319331938287,0.1025397109034933
