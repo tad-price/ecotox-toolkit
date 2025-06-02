@@ -26,7 +26,6 @@ def main():
     print(f"Using device: {device}")
     results_file = "A1_fp_modular.csv"
     
-    # File paths (adjust these according to your file system)
     adore_path = '/home/tad/Desktop/Thesis files/ThesisCode/ecotox-toolkit/data_files/ecotox_mortality_processed.csv'
     chemicals_path = '/home/tad/Desktop/Thesis files/ThesisCode/ecotox-toolkit/data_files/ecotox_properties_with-oecd-function.csv'
     fingerprints_path = '/home/tad/Desktop/Thesis files/ThesisCode/ecotox-toolkit/data_files/fingerprints.csv'  # Fingerprints CSV file
