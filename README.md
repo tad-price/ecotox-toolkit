@@ -1,4 +1,5 @@
 # ecotox-toolkit
+This repository is a work in progress, quality of life improvements will come soon. 
 
 This repository contains Pytorch implementations of models, datasets and evaluation functions that can be used for predicting the ecotoxicity of chemicals for aquatic species.
 
