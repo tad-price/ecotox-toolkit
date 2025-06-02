@@ -1,6 +1,7 @@
 import torch
 import math
 def evaluate_rmse(model, dataloader, device):
+    # evaluate rmse of an MLP
     model.eval()
     sum_sq, total = 0.0, 0
     with torch.no_grad():

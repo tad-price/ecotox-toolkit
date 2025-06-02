@@ -3,8 +3,7 @@ import math
 
 def evaluate_rmse(model, data_loader, device):
     """
-    Evaluate RMSE without copying to CPU for each batch. Accumulate sums on GPU,
-    then finalize on CPU at the end.
+    Evaluate RMSE of a factorization machine model
     """
     model.eval()
     total_samples = 0
