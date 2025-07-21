@@ -18,20 +18,18 @@ from ecotox_datasets.fingerprints_dataset import Dataset_with_fp
 from models.A1_MLP_reduce_fp import FingerprintReduceMLP
 from ecotox_datasets.fingerprints_dataset import Dataset_with_fp
 from models.A1_MLP_reduce_fp import FingerprintReduceMLP
-# -----------------------------------------------------------------------------
-# 3. Main script: Data loading, grid search, training and evaluation.
-# -----------------------------------------------------------------------------
+
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     results_file = "A1_fp_modular.csv"
     
-    adore_path = '/home/tad/Desktop/Thesis files/ThesisCode/ecotox-toolkit/data_files/ecotox_mortality_processed.csv'
-    chemicals_path = '/home/tad/Desktop/Thesis files/ThesisCode/ecotox-toolkit/data_files/ecotox_properties_with-oecd-function.csv'
-    fingerprints_path = '/home/tad/Desktop/Thesis files/ThesisCode/ecotox-toolkit/data_files/fingerprints.csv'  # Fingerprints CSV file
+    adore_path = '/home/tad/Desktop/Thesisfiles/ThesisCode/ecotox-toolkit/data_files/ecotox_mortality_processed.csv'
+    chemicals_path = '/home/tad/Desktop/Thesisfiles/ThesisCode/ecotox-toolkit/data_files/ecotox_properties_with-oecd-function.csv'
+    fingerprints_path = '/home/tad/Desktop/Thesisfiles/ThesisCode/ecotox-toolkit/data_files/fingerprints.csv'  # Fingerprints CSV file
+    
     
     # Load ecotox data with fingerprint merging:
-    # Note: use_fingerprint is set to True and the fingerprint column is assumed to be "morgan_fp".
     data, y = load_ecotox_data(
         adore_path=adore_path,
         chemicals_path=chemicals_path,

@@ -26,7 +26,6 @@ def main():
     adore_path = '/home/tad/Desktop/Thesis files/ThesisCode/ecotox-toolkit/data_files/ecotox_mortality_processed.csv'
     chemicals_path = '/home/tad/Desktop/Thesis files/ThesisCode/ecotox-toolkit/data_files/ecotox_properties_with-oecd-function.csv'
 
-    # For mol2vec, we assume the required columns are already in the chemicals file.
     mol2vec_cols = [f'chem_mol2vec{str(i).zfill(3)}' for i in range(300)]
     
     # Load data with use_mol2vec=True (note: mol2vec_path is None)
@@ -34,7 +33,7 @@ def main():
         adore_path=adore_path,
         chemicals_path=chemicals_path,
         use_mol2vec=True,
-        mol2vec_path=None,      # using columns from the chemicals file
+        mol2vec_path=None,      
         mol2vec_cols=mol2vec_cols
     )
     
@@ -44,7 +43,7 @@ def main():
     mol2vec_embeds = data[mol2vec_cols].values
     durations = data['duration'].values.reshape(-1, 1)
     
-    # Set up Group K-Fold based on CAS (chemical identifier)
+    # Set up Group K-Fold based on CAS identifier, which ensures no leakage
     groups = data['CAS'].cat.codes
     gkf = GroupKFold(n_splits=5)
     fold_splits = list(gkf.split(mol2vec_embeds, y, groups=groups))
