@@ -13,11 +13,6 @@ import sklearn.preprocessing as sk_prep
 import torch
 from torch.utils.data import DataLoader
 
-# -----------------------------------------------------------------------------
-# repo imports ----------------------------------------------------------------
-# -----------------------------------------------------------------------------
-
-# Assuming the structure is ./experiments/script.py and ./models/gibbs_bfm.py
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(ROOT_DIR)
 
@@ -41,7 +36,6 @@ def rmse_on_loader(model: VariationalFactorizationMachine, loader: DataLoader, d
             n_obs += yb.numel()
     return math.sqrt(mse_sum / n_obs)
 
-# NEW evaluation helper for the Gibbs BFM (which uses numpy/scipy arrays)
 def rmse_on_data(model: GibbsBFM, X: sp.csr_matrix, y: np.ndarray) -> float:
     """Calculates RMSE for a model that predicts on a full dataset."""
     preds = model.predict(X)
@@ -54,7 +48,6 @@ def main_gibbs() -> None:
     print("RUNNING EXPERIMENT FOR GIBBS SAMPLING BFM")
     print("="*80 + "\n")
 
-    # --- Data Loading and Preprocessing (identical to the original) ---
     DATA_DIR = "/home/tad/Desktop/Thesisfiles/ThesisCode/ecotox-toolkit/data_files"
     adore_path = os.path.join(DATA_DIR, "ecotox_mortality_processed.csv")
     chemicals_path = os.path.join(DATA_DIR, "ecotox_properties_with-oecd-function.csv")
@@ -89,12 +82,9 @@ def main_gibbs() -> None:
     X_cat = sp.hstack([Xi, Xj, Xd, Xt, Xe], format="csr")
     y_centered_np = y_centered
 
-    # --- Experiment Setup (identical CV splits) ---
     kfold = sk_model.KFold(n_splits=5, shuffle=True, random_state=42)
     cv_splits = list(kfold.split(X_cat, y_centered_np))
 
-    # Hyperparameters for the Gibbs Sampler
-    # Note: These are different from the VFM's hyperparameters
     GIBBS_CFG = dict(k=16, n_iter=200, n_burnin=100)
 
     print(f"\n>>> Gibbs config: {GIBBS_CFG}")
@@ -107,17 +97,13 @@ def main_gibbs() -> None:
         y_tr = y_centered_np[tr_idx]
         y_va = y_centered_np[va_idx]
 
-        # Instantiate the Gibbs BFM
         model = GibbsBFM(
             n_features=X_tr.shape[1],
             k=GIBBS_CFG["k"],
         )
 
-        # Train the model (this is the sampling process)
-        # It takes the full dataset, not a DataLoader
         model.fit(X_tr, y_tr, n_iter=GIBBS_CFG["n_iter"], n_burnin=GIBBS_CFG["n_burnin"])
 
-        # Evaluate the model on the validation set
         rmse_val = rmse_on_data(model, X_va, y_va)
         rmses.append(rmse_val)
         print(f"   Fold {fold}: RMSE={rmse_val:.4f}")

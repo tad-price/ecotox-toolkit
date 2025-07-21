@@ -22,13 +22,11 @@ def main():
     print(f"Using device: {device}")
     results_file = "A1_m2v_modular.csv"
     
-    # File paths (adjust these paths to point to your data files)
     adore_path = '/home/tad/Desktop/Thesis files/ThesisCode/ecotox-toolkit/data_files/ecotox_mortality_processed.csv'
     chemicals_path = '/home/tad/Desktop/Thesis files/ThesisCode/ecotox-toolkit/data_files/ecotox_properties_with-oecd-function.csv'
 
     mol2vec_cols = [f'chem_mol2vec{str(i).zfill(3)}' for i in range(300)]
     
-    # Load data with use_mol2vec=True (note: mol2vec_path is None)
     data, y = load_ecotox_data(
         adore_path=adore_path,
         chemicals_path=chemicals_path,
@@ -37,18 +35,15 @@ def main():
         mol2vec_cols=mol2vec_cols
     )
     
-    # Extract fields
     species_ids = data['species'].cat.codes.values
     n_species = len(data['species'].cat.categories)
     mol2vec_embeds = data[mol2vec_cols].values
     durations = data['duration'].values.reshape(-1, 1)
     
-    # Set up Group K-Fold based on CAS identifier, which ensures no leakage
     groups = data['CAS'].cat.codes
     gkf = GroupKFold(n_splits=5)
     fold_splits = list(gkf.split(mol2vec_embeds, y, groups=groups))
     
-    # Define parameter grid
     param_grid = {
         'species_emb_dim': [16],
         'mol2vec_reduce_dim': [16],
@@ -61,7 +56,6 @@ def main():
     keys = list(param_grid.keys())
     param_combos = list(itertools.product(*param_grid.values()))
     
-    # Grid search over hyperparameters
     for combo in param_combos:
         params = dict(zip(keys, combo))
         fold_rmses = []
@@ -90,7 +84,6 @@ def main():
                 shuffle=False
             )
             
-            # Initialize model using the Mol2vecReduceMLP architecture
             model = Mol2vecReduceMLP(
                 n_species=n_species,
                 mol2vec_dim=mol2vec_embeds.shape[1],
@@ -105,7 +98,6 @@ def main():
                 weight_decay=params['weight_decay']
             )
             
-            # Train for specified epochs
             for epoch in range(params['n_epochs']):
                 train_one_epoch(model, train_loader, optimizer, device)
                 
@@ -116,7 +108,6 @@ def main():
         std_rmse = np.std(fold_rmses)
         print(f"Params: {params} -> mean RMSE: {mean_rmse:.4f}, std RMSE: {std_rmse:.4f}")
         
-        # Append results to CSV
         df = pd.DataFrame([{
             **params,
             'mean_rmse': mean_rmse,

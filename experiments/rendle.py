@@ -85,7 +85,6 @@ def main_bfm_paper() -> None:
         Xe_va = enc_dict["tax_class"].transform(df_va[["tax_class"]])
         X_va = sp.hstack([Xi_va, Xj_va, Xd_va, Xt_va, Xe_va], format="csr")
 
-        # Instantiate the efficient BFM
         model = BayesianFactorizationMachine(
             n_features=X_tr.shape[1],
             k=BFM_CFG["k"],
@@ -108,5 +107,4 @@ def main_bfm_paper() -> None:
     )
 
 if __name__ == "__main__":
-    # Call the new experiment function
     main_bfm_paper()

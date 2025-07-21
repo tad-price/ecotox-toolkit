@@ -38,28 +38,19 @@ def main():
         fp_col="morgan_fp"
     )
     
-    # Extract species IDs and cast them as categorical.
     species_ids = data['species'].cat.codes.values
     n_species = len(data['species'].cat.categories)
     
-    # Extract the fingerprint embeddings.
-    # The load_ecotox_data function has merged the fingerprint data into the DataFrame.
-    # Convert the column (which stores lists as strings or already as lists) to a 2D numpy array.
     fp_embeds = np.array(list(data["morgan_fp"]))
     
     # Get the duration column.
     durations = data['duration'].values.reshape(-1, 1)
     
-    # Group K-Fold split based on CAS (chemical identifier)
     groups = data['CAS'].cat.codes
     from sklearn.model_selection import GroupKFold
     gkf = GroupKFold(n_splits=5)
     fold_splits = list(gkf.split(fp_embeds, y, groups=groups))
     
-    # -----------------------------------------------------------------------------
-    # Define the hyperparameter grid for grid search.
-    # Note: fp_reduce_dim is analogous to selfies_reduce_dim / mol2vec_reduce_dim.
-    # -----------------------------------------------------------------------------
     param_grid = {
         'species_emb_dim': [16],
         'fp_reduce_dim': [32],  
@@ -72,9 +63,6 @@ def main():
     keys = list(param_grid.keys())
     param_combos = list(itertools.product(*param_grid.values()))
     
-    # -----------------------------------------------------------------------------
-    # Grid Search loop over hyperparameter combinations.
-    # -----------------------------------------------------------------------------
     for combo in param_combos:
         params = dict(zip(keys, combo))
         fold_rmses = []
@@ -97,8 +85,6 @@ def main():
             train_loader = DataLoader(train_dataset, batch_size=params['batch_size'], shuffle=True)
             val_loader = DataLoader(val_dataset, batch_size=params['batch_size'], shuffle=False)
             
-            # Initialize the fingerprint MLP model.
-            # Determine fp_dim from the shape of the fingerprint embeddings.
             fp_dim = fp_embeds.shape[1]
             model = FingerprintReduceMLP(
                 n_species=n_species,
@@ -114,11 +100,9 @@ def main():
                 weight_decay=params['weight_decay']
             )
             
-            # Train model for the specified number of epochs.
             for epoch in range(params['n_epochs']):
                 train_one_epoch(model, train_loader, optimizer, device)
             
-            # Evaluate on the validation fold.
             fold_rmse = evaluate_rmse(model, val_loader, device)
             fold_rmses.append(fold_rmse)
         
