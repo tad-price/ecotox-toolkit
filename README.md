@@ -5,13 +5,11 @@ This repository contains Pytorch implementations of models, datasets and evaluat
 
 Currently supported datasets: ADORE, Synth-ADORE (coming soon)
 
-Implemented models: Factorization Machine, MLP, MLP+dim reduction, Cross network; cVAE (coming soon)
+Implemented models: Factorization Machine, MLP, MLP+dim reduction, Cross network; Bayesian Factorization Machine with Blocked Gibbs Sampling
 
-Supported chemical features: mol2vec, fingerprints, SelFormer embeddings. Code can easily be extended to new features. 
+Experiments:
+-
+-
+-
 
-Experiments: 
-
-Visualisation and interpretation: SSD's (pending refactor)
-
-
-This repository is built as part of a Master Thesis project at the Dutch National Institute of Public Health and Environment (RIVM). 
+This repository is built as part of a Master Thesis project at the University of Amsterdam and the Dutch National Institute of Public Health and Environment (RIVM). 
