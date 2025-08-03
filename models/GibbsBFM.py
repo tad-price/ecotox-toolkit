@@ -1,5 +1,3 @@
-# file: models/GibbsBFM.py (Final, Corrected Version)
-
 import numpy as np
 import scipy.sparse as sp
 from tqdm import trange
@@ -32,7 +30,6 @@ class GibbsBFM:
         self.samples = []
         X_sq = X.copy(); X_sq.data **= 2
 
-        # --- Initial full prediction ---
         XV = X.dot(factors_v)
         interaction_term = 0.5 * np.sum(XV**2 - X_sq.dot(factors_v**2), axis=1)
         y_pred = bias + X.dot(linear_w) + interaction_term
@@ -81,13 +78,11 @@ class GibbsBFM:
                     # For a single v_jf, the model is linear: y = C + v_jf * (x_j * h_jf)
                     # Contribution of v_jf to y_pred is v_jf * (x_j * h_jf)
                     
-                    # <<< FIX: Reshape h_jf to (N, 1) for .multiply() >>>
                     old_contrib = (x_j.multiply(h_jf.reshape(-1, 1)) * v_old).toarray().ravel()
                     y_pred -= old_contrib
                     
                     residuals = y - y_pred
                     
-                    # <<< FIX: Reshape h_jf for the g_jf calculation as well >>>
                     g_jf = x_j.multiply(h_jf.reshape(-1, 1)).toarray().ravel()
                     
                     v_var_inv = self.lambda_v * precision_alpha + precision_alpha * np.dot(g_jf, g_jf)
@@ -98,14 +93,11 @@ class GibbsBFM:
                     v_mean = (1.0 / v_var_inv) * (precision_alpha * np.dot(residuals, g_jf))
                     v_new = np.random.normal(loc=v_mean, scale=np.sqrt(1.0 / v_var_inv))
                     
-                    # Add new contribution and update XV for the next iteration
-                    # <<< FIX: Ensure correct shapes for update >>>
                     new_contrib = g_jf * v_new
                     y_pred += new_contrib
                     XV[:, f] += (x_j * (v_new - v_old)).toarray().ravel()
                     factors_v[j, f] = v_new
 
-            # --- Sample observation precision (α) ---
             # Recompute final prediction to avoid floating point drift
             final_linear = X.dot(linear_w)
             final_XV = X.dot(factors_v)
@@ -124,7 +116,6 @@ class GibbsBFM:
                 })
 
     def predict(self, X: sp.csr_matrix) -> np.ndarray:
-        # The predict method was already correct
         if not self.samples:
             raise RuntimeError("Model has not been trained or no samples were collected.")
 

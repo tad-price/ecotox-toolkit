@@ -1,4 +1,3 @@
-# Unblocked gibbs sampling here
 
 import numpy as np
 import pandas as pd
@@ -55,8 +54,14 @@ def main_bfm_paper() -> None:
     for col, enc in enc_dict.items():
         enc.fit(full_data[[col]])
 
-    kfold = sk_model.KFold(n_splits=3, shuffle=True, random_state=42)
-    cv_splits = list(kfold.split(full_data))
+    triplet_id = pd.factorize(
+        full_data["CAS"].astype(str) + "_" +
+        full_data["species"].astype(str) + "_" +
+        full_data["duration"].astype(str)
+    )[0]
+
+    gkf    = sk_model.GroupKFold(n_splits=5)
+    cv_splits = list(gkf.split(full_data, y_centered, groups=triplet_id))
 
 # PARAMETERS FOR BFM
     BFM_CFG = dict(k=32, n_iter=3, n_burn=2)
@@ -70,7 +75,6 @@ def main_bfm_paper() -> None:
         df_tr, df_va = full_data.iloc[tr_idx], full_data.iloc[va_idx]
         y_tr, y_va = y_centered[tr_idx], y_centered[va_idx]
 
-        # Note: We transform based on the encoder fitted on the full data - this could result in data leakage
         Xi_tr = enc_dict["species"].transform(df_tr[["species"]])
         Xj_tr = enc_dict["CAS"].transform(df_tr[["CAS"]])
         Xd_tr = enc_dict["duration"].transform(df_tr[["duration"]])
