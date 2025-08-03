@@ -1,4 +1,3 @@
-# file: models/bfm_fast.py
 import numpy as np
 import scipy.sparse as sp
 from scipy.stats import gamma
@@ -29,17 +28,17 @@ class BayesianFactorizationMachine:
         n_obs, p = X.shape
         assert p == self.n_features
 
-        # parameters -------------------------------------------------------
+        # parameters
         w0 = 0.0
         w  = np.zeros(p)
         v  = rng.normal(0.0, 0.1, size=(p, self.k))
 
-        # hyper-parameters (scalar) ----------------------------------------
+        # hyper-parameters (scalar) 
         alpha     = 1.0              # global precision
         mu_w      = 0.0; lam_w  = 1.0
         mu_v      = 0.0; lam_v  = 1.0
 
-        # helpers ----------------------------------------------------------
+        # helpers 
         X2 = X.copy(); X2.data **= 2
         q  = X @ v                                # (n_obs, k)
         interact = 0.5 * ((q ** 2) - X2 @ (v ** 2)).sum(axis=1)
@@ -82,7 +81,7 @@ class BayesianFactorizationMachine:
                 e[idx] += x * (w[j] - new_wj)# apply new contribution
                 w[j] = new_wj
 
-            # ----- sample latent matrix v --------------------------------
+            #sample latent matrix v 
             #   hyper-mean
             var_mu_v  = 1.0 / (self.gamma_0 + p * self.k * lam_v)
             mean_mu_v = var_mu_v * lam_v * v.sum()
@@ -105,11 +104,11 @@ class BayesianFactorizationMachine:
                     q_f = q[idx, f]                    # q before this factor update
                     v_old = v[j, f]
 
-                    # -------- helper: h_i = x * (q_f - x * v_old) -------------------------
+                    #  helper: h_i = x * (q_f - x * v_old) 
                     h = x * (q_f - x * v_old)          
                     h_sq_sum = np.dot(h, h)           
 
-                    # -------- posterior variance / mean ----------------------------------
+                    #  posterior variance / mean 
                     denom = lam_v + alpha * h_sq_sum
                     denom = max(denom, 1e-12)          # clamp for num stability
                     var   = 1.0 / denom
@@ -119,22 +118,21 @@ class BayesianFactorizationMachine:
                     v_new = rng.normal(mean, np.sqrt(var))
                     delta = v_old - v_new              
 
-                    # -------- fast state updates ----------------------
+                    #  fast state updates 
                     e[idx]      += delta * h           
                     q[idx, f]   -= x * delta          
                     v[j, f]      = v_new
 
 
-            # ----- sample global precision α -----------------------------
+            #  sample global precision α 
             shape = self.alpha_a0 + 0.5 * n_obs
             rate  = self.alpha_b0 + 0.5 * np.dot(e, e)
             alpha = rng.gamma(shape, 1.0 / rate)
 
-            # ----- store --------------------------------------------------
+            #store 
             if it >= n_burn:
                 self.samples.append(dict(w0=w0, w=w.copy(), v=v.copy(), alpha=alpha))
 
-    # --------------------------------------------------------------------- #
     def predict(self, X: sp.csr_matrix) -> np.ndarray:
         if not self.samples:
             raise RuntimeError("Call `fit` first; no posterior draws available.")
