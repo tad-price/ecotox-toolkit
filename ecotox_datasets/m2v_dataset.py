@@ -4,7 +4,6 @@ from torch.utils.data import Dataset
 class Mol2VecCrossDataset(Dataset):
     """
     Returns (species_id, duration, mol2vec_embed, y) for each sample.
-    Exactly mirrors the SELFIES approach, except mol2vec instead of selfies.
     """
     def __init__(self, species_ids, durations, mol2vec_embeds, y):
         self.species_ids = torch.tensor(species_ids, dtype=torch.long)

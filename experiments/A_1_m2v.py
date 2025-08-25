@@ -22,8 +22,8 @@ def main():
     print(f"Using device: {device}")
     results_file = "A1_m2v_modular.csv"
     
-    adore_path = '/home/tad/Desktop/Thesis files/ThesisCode/ecotox-toolkit/data_files/ecotox_mortality_processed.csv'
-    chemicals_path = '/home/tad/Desktop/Thesis files/ThesisCode/ecotox-toolkit/data_files/ecotox_properties_with-oecd-function.csv'
+    adore_path = '/home/tad/Desktop/Thesisfiles/ThesisCode/ecotox-toolkit/data_files/ecotox_mortality_processed.csv'
+    chemicals_path = '/home/tad/Desktop/Thesisfiles/ThesisCode/ecotox-toolkit/data_files/ecotox_properties_with-oecd-function.csv'
 
     mol2vec_cols = [f'chem_mol2vec{str(i).zfill(3)}' for i in range(300)]
     

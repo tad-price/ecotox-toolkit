@@ -11,6 +11,7 @@ import pandas as pd
 import scipy.sparse as sp
 import sklearn.model_selection as sk_model
 import sklearn.preprocessing as sk_prep
+import sklearn.impute as sk_impute
 from tqdm.auto import trange
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -21,8 +22,8 @@ from dataloaders.load_ecotox import load_ecotox_data
 from models.BFM_rendle import BayesianFactorizationMachine
 
 
-def make_design(df: pd.DataFrame, enc_dict: Dict[str, sk_prep.OneHotEncoder]) -> sp.csr_matrix:
-    """Creates the one-hot encoded design matrix."""
+def make_design_cats(df: pd.DataFrame, enc_dict: Dict[str, sk_prep.OneHotEncoder]) -> sp.csr_matrix:
+    """Creates the one-hot encoded design matrix (categorical block only)."""
     Xi = enc_dict["species"].transform(df[["species"]])
     Xj = enc_dict["CAS"].transform(df[["CAS"]])
     Xd = enc_dict["duration"].transform(df[["duration"]])
@@ -33,7 +34,7 @@ def make_design(df: pd.DataFrame, enc_dict: Dict[str, sk_prep.OneHotEncoder]) ->
 
 def main() -> None:
     print("\n" + "=" * 80)
-    print("5‑FOLD BFM WITH SEPARATE OOF UNCERTAINTY SAVING")
+    print("5-FOLD BFM WITH SEPARATE OOF UNCERTAINTY SAVING")
     print("=" * 80 + "\n")
 
     # ----------------------------- data -----------------------------------
@@ -51,9 +52,9 @@ def main() -> None:
         random_state    = 42,
     )
 
-    # ————— feature engineering identical to the FM script —————
     full_data["duration"] = pd.Categorical(full_data["duration"].astype(int))
     full_data["chem_mw"]  = np.log(full_data["chem_mw"])
+    num_cols = ["chem_mw", "chem_rdkit_clogp"]
 
     enc_dict: Dict[str, sk_prep.OneHotEncoder] = {
         "species":     sk_prep.OneHotEncoder(handle_unknown="ignore"),
@@ -65,7 +66,7 @@ def main() -> None:
     for col, enc in enc_dict.items():
         enc.fit(full_data[[col]])
 
-    # -------------------- group‑based 5‑fold split ------------------------
+    # -------------------- group-based 5-fold split ------------------------
     # groups are unique (CAS, species, duration) triplets
     triplet_id = pd.factorize(
         full_data["CAS"].astype(str) + "_" +
@@ -77,7 +78,7 @@ def main() -> None:
     splits = list(gkf.split(full_data, y_centered, groups=triplet_id))
 
     # persist splits so that downstream runs (e.g. stacking) reuse them
-    ARTIFACTS = Path("artifacts"); ARTIFACTS.mkdir(exist_ok=True)
+    ARTIFACTS = Path("artifacts_final"); ARTIFACTS.mkdir(exist_ok=True)
     joblib.dump(splits, ARTIFACTS / "cv_splits.pkl")
 
     # -------------------- allocate OOF containers -------------------------
@@ -86,18 +87,37 @@ def main() -> None:
     oof_epistemic_var   = np.empty(N, dtype=np.float32)
     oof_aleatoric_var   = np.empty(N, dtype=np.float32)
 
-    BFM_CFG = dict(k=64, n_iter=200, n_burn=100)
+    BFM_CFG = dict(k=32, n_iter=800, n_burn=600)
     print(f"BFM config: {BFM_CFG}\n")
 
     tic = time.time()
 
-    # -------------------- cross‑validation loop ---------------------------
+    # -------------------- cross-validation loop ---------------------------
     for fold, (tr_idx, va_idx) in enumerate(splits, 1):
         df_tr, df_va = full_data.iloc[tr_idx], full_data.iloc[va_idx]
         y_tr, y_va   = y_centered[tr_idx], y_centered[va_idx]
 
-        X_tr = make_design(df_tr, enc_dict)
-        X_va = make_design(df_va, enc_dict)
+        # categorical design (same logic as before)
+        X_tr_cat = make_design_cats(df_tr, enc_dict)
+        X_va_cat = make_design_cats(df_va, enc_dict)
+
+        # numeric block: median impute + standardize (fit on train, transform val)
+        if num_cols:
+            imputer = sk_impute.SimpleImputer(strategy="median")
+            scaler  = sk_prep.StandardScaler(with_mean=True, with_std=True)
+
+            num_tr = imputer.fit_transform(df_tr[num_cols])
+            num_tr = scaler.fit_transform(num_tr)
+            num_va = imputer.transform(df_va[num_cols])
+            num_va = scaler.transform(num_va)
+
+            X_tr_num = sp.csr_matrix(num_tr)
+            X_va_num = sp.csr_matrix(num_va)
+
+            X_tr = sp.hstack([X_tr_cat, X_tr_num], format="csr")
+            X_va = sp.hstack([X_va_cat, X_va_num], format="csr")
+        else:
+            X_tr, X_va = X_tr_cat, X_va_cat
 
         model = BayesianFactorizationMachine(
             n_features=X_tr.shape[1], k=BFM_CFG["k"]
@@ -114,10 +134,10 @@ def main() -> None:
         draws   = np.empty((n_draws, len(va_idx)), dtype=np.float64)
 
         for d, s in enumerate(model.samples):
-            w0, w, v   = s["w0"], s["w"], s["v"]
-            q          = X_va @ v
-            inter      = 0.5 * ((q ** 2) - X2_va @ (v ** 2)).sum(axis=1)
-            draws[d]   = w0 + X_va @ w + inter
+            w0, w, v = s["w0"], s["w"], s["v"]
+            q        = X_va @ v
+            inter    = 0.5 * ((q ** 2) - X2_va @ (v ** 2)).sum(axis=1)
+            draws[d] = w0 + X_va @ w + inter
 
         oof_mean[va_idx]          = draws.mean(axis=0, dtype=np.float64)
         oof_epistemic_var[va_idx] = draws.var(axis=0,  dtype=np.float64, ddof=0)

@@ -1,192 +1,196 @@
+# experiments/exp_bfm_ids_vs_basic.py
+import os, time, pathlib
 import numpy as np
 import pandas as pd
-import pickle, pathlib
-import time
 import scipy.sparse as sp
 import sklearn.model_selection as sk_model
 import sklearn.preprocessing as sk_prep
 import sklearn.impute as sk_impute
-import os
-from os import sys
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.append(ROOT_DIR)
+import sys; sys.path.append(ROOT_DIR)
 
 from dataloaders.load_ecotox import load_ecotox_data
 from models.BFM_rendle import BayesianFactorizationMachine
+s
+
+def rmse(y_true, y_pred):
+    return float(np.sqrt(np.mean((y_true - y_pred) ** 2)))
 
 
-def rmse_on_data(model, X: sp.csr_matrix, y: np.ndarray) -> float:
-    preds = model.predict(X)
-    mse = np.mean((preds - y) ** 2)
-    return np.sqrt(mse)
-
-
-def main_bfm_feature_sweep() -> None:
+def main():
     print("\n" + "="*80)
-    print("RUNNING FEATURE ADDITION SWEEP WITH UNBLOCKED GIBBS BFM")
+    print("UNBLOCKED GIBBS BFM — IDS BASELINE, THEN ADD BASIC FEATURES")
     print("="*80 + "\n")
 
-    DATA_DIR = "/home/tad/Desktop/Thesisfiles/ThesisCode/ecotox-toolkit/data_files"
+    # ---------- paths ----------
+    DATA_DIR = os.environ.get("ECOTOX_DATA_DIR", os.path.join(ROOT_DIR, "data_files"))
     adore_path = os.path.join(DATA_DIR, "ecotox_mortality_processed.csv")
     chemicals_path = os.path.join(DATA_DIR, "ecotox_properties_with-oecd-function.csv")
 
+    # ---------- data ----------
     full_data, y_centered = load_ecotox_data(
         adore_path=adore_path,
         chemicals_path=chemicals_path,
-        use_selfies=False,
-        use_mol2vec=False,
-        use_fingerprint=False,
-        shuffle=True,
-        random_state=42,
+        use_selfies=False, use_mol2vec=False, use_fingerprint=False,
+        shuffle=True, random_state=42,
     )
 
+    # canonicalize a few fields
+    full_data = full_data.copy()
     full_data["duration"] = pd.Categorical(full_data["duration"].astype(int))
+    # log-mw like your previous runs
+    if (full_data["chem_mw"] <= 0).any():
+        raise ValueError("chem_mw contains non-positive values; cannot log-transform.")
     full_data["chem_mw"] = np.log(full_data["chem_mw"])
 
-    enc_dict = {
-        "species": sk_prep.OneHotEncoder(handle_unknown='ignore'),
-        "CAS": sk_prep.OneHotEncoder(handle_unknown='ignore'),
-        "duration": sk_prep.OneHotEncoder(handle_unknown='ignore'),
-        "tax_family": sk_prep.OneHotEncoder(handle_unknown='ignore'),
-        "tax_class": sk_prep.OneHotEncoder(handle_unknown='ignore'),
-    }
-    for col, enc in enc_dict.items():
-        enc.fit(full_data[[col]])
+    # choose which clogP to use
+    CLOGP_CHOICES = ["chem_rdkit_clogp", "chem_mordred_SLogP"]
+    clogp_col = next((c for c in CLOGP_CHOICES if c in full_data.columns), None)
+    if clogp_col is None:
+        print("! Warning: no clogP column found; the ‘add clogP’ step will be skipped.")
 
-    # GroupKFold on triplet (CAS, species, duration)
+    # ---------- CV split ----------
+    # Triplet holdout like your current script:
     triplet_id = pd.factorize(
         full_data["CAS"].astype(str) + "_" +
         full_data["species"].astype(str) + "_" +
         full_data["duration"].astype(str)
     )[0]
-    gkf = sk_model.GroupKFold(n_splits=5)
+    gkf = sk_model.GroupKFold(n_splits=2)
     cv_splits = list(gkf.split(full_data, y_centered, groups=triplet_id))
 
-    BFM_CFG = dict(k=32, n_iter=3, n_burn=2)
+    # (Optional) For chemical-holdout instead, replace groups=full_data["CAS"].astype(str)
+
+    # ---------- config ----------
+    BFM_CFG = dict(k=32, n_iter=200, n_burn=100)
     print(f">>> BFM config: {BFM_CFG}")
 
-    CLOGP_CANDIDATES = ["chem_rdkit_clogp", "chem_mordred_SLogP"]
-    clogp_col = next((c for c in CLOGP_CANDIDATES if c in full_data.columns), None)
+    steps = []
+    # 0) baseline: ONLY identifiers
+    steps.append(dict(
+        name="ids_only",
+        cat_cols=["species", "CAS", "duration"],
+        num_cols=[]
+    ))
+    # 1) add chem_mw
+    steps.append(dict(
+        name="ids_plus_mw",
+        cat_cols=["species", "CAS", "duration"],
+        num_cols=["chem_mw"]
+    ))
+    # 2) add clogP (if available)
+    if clogp_col is not None:
+        steps.append(dict(
+            name=f"ids_plus_mw_{clogp_col}",
+            cat_cols=["species", "CAS", "duration"],
+            num_cols=["chem_mw", clogp_col]
+        ))
+    # 3) add tax_class (categorical)
+    steps.append(dict(
+        name="ids_mw_clogp_taxclass" if clogp_col else "ids_mw_taxclass",
+        cat_cols=["species", "CAS", "duration", "tax_class"],
+        num_cols=["chem_mw"] + ([clogp_col] if clogp_col else [])
+    ))
+    # 4) add tax_family (categorical)
+    steps.append(dict(
+        name="ids_mw_clogp_taxclass_taxfamily" if clogp_col else "ids_mw_taxclass_taxfamily",
+        cat_cols=["species", "CAS", "duration", "tax_class", "tax_family"],
+        num_cols=["chem_mw"] + ([clogp_col] if clogp_col else [])
+    ))
 
-    base_num_cols = ["chem_mw"] + ([clogp_col] if clogp_col is not None else [])
-    if clogp_col is None:
-        print("! Warning: neither 'chem_rdkit_clogp' nor 'chem_mordred_SLogP' present; "
-              "baseline will use only 'chem_mw'.")
-
-    ordered_new_feats = [
-        "chem_mordred_FilterItLogS",
-        "chem_mordred_TopoPSA",
-        "chem_mordred_apol",
-        "chem_mordred_bpol",
-        "chem_mordred_SMR",
-        "chem_mordred_VMcGowan",
-        "chem_mordred_LabuteASA",
-        "chem_pcp_heavy_atom_count",
-        "chem_mordred_AMW",
-        "chem_mordred_nHBAcc",
-        "chem_mordred_nHBDon",
-        "chem_mordred_nRot",
-        "chem_mordred_nAromAtom",
-        "chem_mordred_nRing",
-        "chem_mordred_nCl",
-        "chem_mordred_nBr",
-        "chem_mordred_nX",
-        "chem_OH_count",
-        "chem_pcp_doublebonds_count",
-        "chem_mordred_ECIndex",
-    ]
-
-    # Keep only those actually present; warn otherwise
-    present_new_feats = [c for c in ordered_new_feats if c in full_data.columns]
-    missing = sorted(set(ordered_new_feats) - set(present_new_feats))
-    if len(missing) > 0:
-        print(f"! Warning: {len(missing)} requested descriptors not found and will be skipped:\n  {missing}")
-
-    # -------------------------------------------
-    # Run cumulative addition: base + first i cols
-    # -------------------------------------------
     results = []
     pathlib.Path("artifacts").mkdir(exist_ok=True)
+    tic_all = time.time()
 
-    sweep_start = time.time()
-    for i in range(0, len(present_new_feats) + 1):
-        add_cols = present_new_feats[:i]
-        use_num_cols = base_num_cols + add_cols
-
+    for s_idx, step in enumerate(steps[2:], 3):
         print("\n" + "-"*80)
-        if i == 0:
-            print(f"BASELINE (no added features) continuous cols: {use_num_cols}")
-        else:
-            print(f"ADDING #{i}: '{present_new_feats[i-1]}'  | Total continuous cols now: {len(use_num_cols)}")
+        print(f"STEP {s_idx}/{len(steps)}: {step['name']}")
+        print(f"  Categorical: {step['cat_cols']}")
+        print(f"  Numeric:     {step['num_cols']}")
         print("-"*80)
 
         fold_rmses = []
         step_tic = time.time()
 
         for fold, (tr_idx, va_idx) in enumerate(cv_splits, 1):
-            df_tr, df_va = full_data.iloc[tr_idx], full_data.iloc[va_idx]
+            df_tr = full_data.iloc[tr_idx]
+            df_va = full_data.iloc[va_idx]
             y_tr, y_va = y_centered[tr_idx], y_centered[va_idx]
 
-            # --- categorical blocks (fit once above; transform per split) ---
-            Xi_tr = enc_dict["species"].transform(df_tr[["species"]])
-            Xj_tr = enc_dict["CAS"].transform(df_tr[["CAS"]])
-            Xd_tr = enc_dict["duration"].transform(df_tr[["duration"]])
-            Xt_tr = enc_dict["tax_family"].transform(df_tr[["tax_family"]])
-            Xe_tr = enc_dict["tax_class"].transform(df_tr[["tax_class"]])
+            # ----- categorical encoders (fit on train only) -----
+            cat_blocks_tr = []
+            cat_blocks_va = []
+            for col in step["cat_cols"]:
+                if col not in df_tr.columns:
+                    raise KeyError(f"Missing categorical column: {col}")
+                enc = sk_prep.OneHotEncoder(handle_unknown="ignore", sparse_output=True)
+                enc.fit(df_tr[[col]])
+                cat_blocks_tr.append(enc.transform(df_tr[[col]]))
+                cat_blocks_va.append(enc.transform(df_va[[col]]))
 
-            Xi_va = enc_dict["species"].transform(df_va[["species"]])
-            Xj_va = enc_dict["CAS"].transform(df_va[["CAS"]])
-            Xd_va = enc_dict["duration"].transform(df_va[["duration"]])
-            Xt_va = enc_dict["tax_family"].transform(df_va[["tax_family"]])
-            Xe_va = enc_dict["tax_class"].transform(df_va[["tax_class"]])
+            # ----- numeric impute/scale (train-only fit) -----
+            num_tr = sp.csr_matrix((len(df_tr), 0))
+            num_va = sp.csr_matrix((len(df_va), 0))
+            if step["num_cols"]:
+                for c in step["num_cols"]:
+                    if c not in df_tr.columns:
+                        raise KeyError(f"Missing numeric column: {c}")
 
-            # --- numeric block: median impute + standardize (fit on train only) ---
-            imputer = sk_impute.SimpleImputer(strategy="median")
-            scaler = sk_prep.StandardScaler(with_mean=True, with_std=True)
+                imputer = sk_impute.SimpleImputer(strategy="median")
+                scaler = sk_prep.StandardScaler(with_mean=True, with_std=True)
 
-            num_tr = imputer.fit_transform(df_tr[use_num_cols])
-            num_tr = scaler.fit_transform(num_tr)            # dense (n_tr, p)
-            num_va = imputer.transform(df_va[use_num_cols])
-            num_va = scaler.transform(num_va)                # dense (n_va, p)
+                xtr = imputer.fit_transform(df_tr[step["num_cols"]])
+                xtr = scaler.fit_transform(xtr)
+                xva = imputer.transform(df_va[step["num_cols"]])
+                xva = scaler.transform(xva)
 
-            X_tr = sp.hstack([Xi_tr, Xj_tr, Xd_tr, Xt_tr, Xe_tr, sp.csr_matrix(num_tr)], format="csr")
-            X_va = sp.hstack([Xi_va, Xj_va, Xd_va, Xt_va, Xe_va, sp.csr_matrix(num_va)], format="csr")
+                # guard against degenerate variance (rare with these cols, but safe)
+                if np.any(np.isnan(xtr)) or np.any(np.isinf(xtr)):
+                    raise ValueError("NaN/Inf encountered in numeric training block after scaling.")
 
-            # --- model ---
+                num_tr = sp.csr_matrix(xtr)
+                num_va = sp.csr_matrix(xva)
+
+            # ----- design matrices -----
+            X_tr = sp.hstack(cat_blocks_tr + [num_tr], format="csr")
+            X_va = sp.hstack(cat_blocks_va + [num_va], format="csr")
+
+            # ----- model -----
             model = BayesianFactorizationMachine(n_features=X_tr.shape[1], k=BFM_CFG["k"])
             model.fit(X_tr, y_tr, n_iter=BFM_CFG["n_iter"], n_burn=BFM_CFG["n_burn"])
 
-            rmse_val = rmse_on_data(model, X_va, y_va)
-            fold_rmses.append(float(rmse_val))
-            print(f"   Fold {fold}: RMSE={rmse_val:.4f}")
+            yhat_va = model.predict(X_va)
+            r = rmse(y_va, yhat_va)
+            fold_rmses.append(r)
+            print(f"   Fold {fold}: RMSE={r:.4f}")
 
-        mean_rmse, std_rmse = float(np.mean(fold_rmses)), float(np.std(fold_rmses))
+        mean_rmse = float(np.mean(fold_rmses))
+        std_rmse = float(np.std(fold_rmses))
         elapsed = time.time() - step_tic
 
-        print(f"→ Continuous cols: {len(use_num_cols)} "
-              f"| mean ± std RMSE: {mean_rmse:.4f} ± {std_rmse:.4f} "
-              f"| step time {elapsed:.1f}s")
+        print(f"→ {step['name']} | mean ± std RMSE: {mean_rmse:.4f} ± {std_rmse:.4f} | step time {elapsed:.1f}s")
 
         results.append({
-            "n_added": i,
-            "added_feature": None if i == 0 else present_new_feats[i-1],
-            "n_continuous_total": len(use_num_cols),
+            "step": step["name"],
+            "cat_cols": ",".join(step["cat_cols"]),
+            "num_cols": ",".join(step["num_cols"]),
             "mean_rmse": mean_rmse,
             "std_rmse": std_rmse,
             "fold_rmses": fold_rmses,
             "elapsed_s": elapsed,
         })
 
-    total_elapsed = time.time() - sweep_start
+    total_min = (time.time() - tic_all) / 60.0
     res_df = pd.DataFrame(results)
-    res_path = "artifacts/feature_addition_results.csv"
-    res_df.to_csv(res_path, index=False)
+    out_csv = "artifacts/bfm_ids_vs_basic_results.csv"
+    res_df.to_csv(out_csv, index=False)
+
     print("\n" + "="*80)
-    print(f"FEATURE ADDITION SWEEP COMPLETE | total elapsed {total_elapsed/60:.1f} min")
-    print(f"Results saved to: {res_path}")
+    print(f"COMPLETE in {total_min:.1f} min | Results -> {out_csv}")
     print("="*80 + "\n")
 
 
 if __name__ == "__main__":
-    main_bfm_feature_sweep()
+    main()
+

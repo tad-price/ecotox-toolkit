@@ -1,20 +1,3 @@
-#!/usr/bin/env python
-"""
-Factorization‑Machine for Ecotox toxicity prediction
-
-• 5‑fold **GroupKFold** — every replicate that shares the same
-  (CAS, species, duration) triplet is confined to a single fold.
-
-• Two continuous molecular descriptors are added as dense features
-  and standardised *inside each fold*:
-
-    – chem_mw  (log‑scaled molecular weight)
-    – chem_rdkit_clogp
-"""
-
-# ----------------------------------------------------------------------
-# Imports
-# ----------------------------------------------------------------------
 import os, sys, time
 import numpy as np
 import pandas as pd
@@ -24,7 +7,6 @@ import sklearn.model_selection as sk_model
 import torch
 from torch.utils.data import DataLoader
 
-# Local project code
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from dataloaders.load_ecotox         import load_ecotox_data
 from ecotox_datasets.FM_dataset      import EcotoxFMDataset
@@ -33,12 +15,8 @@ from training.train_FM               import train_model
 from evaluate_performance.rmse_FM    import evaluate_rmse
 
 
-# ----------------------------------------------------------------------
-# Main
-# ----------------------------------------------------------------------
 def main() -> None:
 
-    # ---------------------------- paths / device ---------------------
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
@@ -46,7 +24,6 @@ def main() -> None:
     adore_path     = f"{root}/ecotox_mortality_processed.csv"
     chemicals_path = f"{root}/ecotox_properties_with-oecd-function.csv"
 
-    # ---------------------------- load data --------------------------
     full_data, y_centered = load_ecotox_data(
         adore_path      = adore_path,
         chemicals_path  = chemicals_path,
@@ -57,18 +34,25 @@ def main() -> None:
         random_state    = 42,
     )
 
-    # ---------------------------- feature prep -----------------------
+    # ensure positional indices are 0..n-1 so iloc + sparse indexing are aligned
+    full_data = full_data.reset_index(drop=True)
+
+    # categorical preprocess
     full_data["duration"] = pd.Categorical(full_data["duration"].astype(int))
-    full_data["chem_mw"]  = np.log(full_data["chem_mw"])
+
+    # guard before log and use float32 downstream
+    full_data["chem_mw"] = full_data["chem_mw"].clip(lower=1e-8)
+    full_data["chem_mw"] = np.log(full_data["chem_mw"]).astype(np.float32)
 
     cont_cols = ["chem_mw", "chem_rdkit_clogp"]  # numerical features
 
-    # ---------------------------- encoders ---------------------------
-    enc_species    = sk_prep.OneHotEncoder()
-    enc_cas        = sk_prep.OneHotEncoder()
-    enc_duration   = sk_prep.OneHotEncoder()
-    enc_tax_family = sk_prep.OneHotEncoder()
-    enc_tax_class  = sk_prep.OneHotEncoder()
+    # Use float32 and ignore unknowns to avoid blow-ups at val time
+    enc_kw = dict(handle_unknown="ignore", dtype=np.float32)
+    enc_species    = sk_prep.OneHotEncoder(**enc_kw)
+    enc_cas        = sk_prep.OneHotEncoder(**enc_kw)
+    enc_duration   = sk_prep.OneHotEncoder(**enc_kw)
+    enc_tax_family = sk_prep.OneHotEncoder(**enc_kw)
+    enc_tax_class  = sk_prep.OneHotEncoder(**enc_kw)
 
     Xi = enc_species.fit_transform(full_data[["species"]])
     Xj = enc_cas.fit_transform(full_data[["CAS"]])
@@ -76,7 +60,7 @@ def main() -> None:
     Xt = enc_tax_family.fit_transform(full_data[["tax_family"]])
     Xe = enc_tax_class.fit_transform(full_data[["tax_class"]])
 
-    X_cats = scipy.sparse.hstack([Xi, Xj, Xd, Xt, Xe], format="csr")
+    X_cats = scipy.sparse.hstack([Xi, Xj, Xd, Xt, Xe], format="csr", dtype=np.float32)
 
     # ---------------------------- group IDs --------------------------
     triplet_id = pd.factorize(
@@ -88,12 +72,9 @@ def main() -> None:
     gkf          = sk_model.GroupKFold(n_splits=5)
     fold_splits  = list(gkf.split(X_cats, y_centered, groups=triplet_id))
 
-    # ---------------------------- hyper‑params -----------------------
+    # ---------------------------- hyper-params -----------------------
     param_grid = dict(k=[32], lr=[0.001], weight_decay=[0.0001], epochs=[100])
 
-    # ----------------------------------------------------------------
-    # CV loop
-    # ----------------------------------------------------------------
     for k_ in param_grid["k"]:
         for lr_ in param_grid["lr"]:
             for wd_ in param_grid["weight_decay"]:
@@ -103,40 +84,37 @@ def main() -> None:
                     rmse_scores, t0 = [], time.time()
 
                     for fold, (tr_idx, val_idx) in enumerate(fold_splits, 1):
-                        # ---------- categorical -------------------------
+                        # Categorical blocks already subset by positional indices
                         X_cats_tr  = X_cats[tr_idx]
                         X_cats_val = X_cats[val_idx]
                         y_tr, y_val = y_centered[tr_idx], y_centered[val_idx]
 
-                        # ---------- continuous (per‑fold scaling) -------
+                        # >>> FIX: use iloc (positional) to align with indices from GroupKFold
                         scaler       = sk_prep.StandardScaler()
                         X_cont_tr_np = scaler.fit_transform(
-                            full_data.loc[tr_idx, cont_cols].astype(np.float32)
-                        )
+                            full_data.iloc[tr_idx][cont_cols].astype(np.float32)
+                        ).astype(np.float32)
                         X_cont_val_np = scaler.transform(
-                            full_data.loc[val_idx, cont_cols].astype(np.float32)
-                        )
+                            full_data.iloc[val_idx][cont_cols].astype(np.float32)
+                        ).astype(np.float32)
+
                         X_cont_tr  = scipy.sparse.csr_matrix(X_cont_tr_np)
                         X_cont_val = scipy.sparse.csr_matrix(X_cont_val_np)
 
-                        # ---------- final design matrix ---------------
-                        X_tr  = scipy.sparse.hstack([X_cats_tr,  X_cont_tr],  format="csr")
-                        X_val = scipy.sparse.hstack([X_cats_val, X_cont_val], format="csr")
+                        X_tr  = scipy.sparse.hstack([X_cats_tr,  X_cont_tr],  format="csr", dtype=np.float32)
+                        X_val = scipy.sparse.hstack([X_cats_val, X_cont_val], format="csr", dtype=np.float32)
 
-                        # ---------- datasets / loaders ----------------
                         train_ds = EcotoxFMDataset(X_tr,  y_tr)
                         val_ds   = EcotoxFMDataset(X_val, y_val)
 
                         train_loader = DataLoader(train_ds, batch_size=32, shuffle=True)
                         val_loader   = DataLoader(val_ds,   batch_size=32, shuffle=False)
 
-                        # ---------- model ------------------------------
                         model = FactorizationMachine(
                             n_features=X_tr.shape[1],
                             k=k_
                         ).to(device)
 
-                        # ---------- training ---------------------------
                         train_model(
                             model        = model,
                             train_loader = train_loader,
@@ -147,17 +125,13 @@ def main() -> None:
                             device       = device,
                         )
 
-                        # ---------- evaluation -------------------------
                         rmse_val = evaluate_rmse(model, val_loader, device)
                         rmse_scores.append(rmse_val)
                         print(f"   Fold {fold}: RMSE={rmse_val:.4f}")
 
-                    print(f"→ mean ± std RMSE: {np.mean(rmse_scores):.4f} ± "
-                          f"{np.std(rmse_scores):.4f} | elapsed: {time.time() - t0:.1f}s")
+                    dt = time.time() - t0
+                    print(f"→ mean ± std RMSE: {np.mean(rmse_scores):.4f} ± {np.std(rmse_scores):.4f} | elapsed: {dt:.1f}s")
 
 
-# ----------------------------------------------------------------------
-# Entry point
-# ----------------------------------------------------------------------
 if __name__ == "__main__":
     main()
